@@ -8,7 +8,7 @@ import sys
 import time
 import traceback
 import warnings
-
+from multiprocessing import Process
 
 from typing import TYPE_CHECKING, Type, List, Dict, Any
 
@@ -226,7 +226,6 @@ class Worker:
         prepare_for_work: bool = True,
         serializer=None,
     ):  # noqa
-
         connection = self._set_connection(connection, default_worker_ttl)
         self.connection = connection
         self.redis_server_version = None
@@ -882,19 +881,20 @@ class Worker:
 
     def increment_total_working_time(self, job_execution_time, pipeline):
         pipeline.hincrbyfloat(self.key, 'total_working_time', job_execution_time.total_seconds())
+    
+    def _horse_function(self, job: 'Job', queue: 'Queue'):
+        os.setsid()
+        self.main_work_horse(job, queue)
+        os._exit(0) # just in case
 
     def fork_work_horse(self, job: 'Job', queue: 'Queue'):
         """Spawns a work horse to perform the actual work and passes it a job."""
-        child_pid = os.fork()
+        p = Process(target=self._horse_function, args=(job, queue))
         os.environ['RQ_WORKER_ID'] = self.name
         os.environ['RQ_JOB_ID'] = job.id
-        if child_pid == 0:
-            os.setsid()
-            self.main_work_horse(job, queue)
-            os._exit(0)  # just in case
-        else:
-            self._horse_pid = child_pid
-            self.procline('Forked {0} at {1}'.format(child_pid, time.time()))
+        p.start()
+        self._horse_pid = p.pid
+        self.procline('Forked {0} at {1}'.format(self.p.pid, time.time()))
 
     def get_heartbeat_ttl(self, job: 'Job'):
         if job.timeout and job.timeout > 0:
